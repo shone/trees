@@ -15,33 +15,95 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.set(0, 800, 1000);
 camera.lookAt(0, 0, 0);
 
-loadTreeDataCsv(txt);
+fetch('trait_ind_ref_laegeren_rcp2p6_run1.txt').then(async response => {
+	const text = await response.text();
+	loadTreeDataCsv(text);
+});
 
-function loadTreeDataCsv(csvText) {
-	const lines = csvText.split('\n');
-	const fields = Object.fromEntries(lines[0].split(',').map((field, index) => [field, index]));
-	const data = lines.slice(1).map(line => line.split(',').map(str => parseFloat(str))).filter(entry => !entry.some(n => isNaN(n)));
+async function loadTreeDataCsv(csvText) {
+	let lineStartIndex = 0;
+	let lineEndIndex = 0;
+	function readLine() {
+		while (lineEndIndex < csvText.length) {
+			if (csvText[lineEndIndex] === '\n') {
+				const line = csvText.slice(lineStartIndex, lineEndIndex);
+				lineStartIndex = lineEndIndex+1;
+				lineEndIndex++;
+				return line;
+			}
+			lineEndIndex++;
+		}
+		return '';
+	}
 
-	let cellCount = 0; data.forEach(entry => cellCount = Math.max(cellCount, entry[fields.Cell]+1));
+	window.performance.mark('start_read_lines');
+	const firstLine = readLine();
+	const fields = Object.fromEntries(firstLine.split(',').map((field, index) => [field, index]));
+	const fieldCount = Object.keys(fields).length;
 
+	const approxLineCount = Math.floor(csvText.length / 50);
+	const dataBuffer = new Float32Array(fieldCount * approxLineCount);
+	let dataBufferLinesCount = 0;
+
+	for (let lineIndex=0; lineIndex<approxLineCount;) {
+		const line = readLine();
+		if (line === '') {
+			break;
+		}
+
+		const fieldStrings = line.split(',');
+
+		const year      = +(fieldStrings[fields.Year]);      if (isNaN(year))      continue;
+		const cell      = +(fieldStrings[fields.Cell]);      if (isNaN(cell))      continue;
+		const sla       = +(fieldStrings[fields.SLA]);       if (isNaN(sla))       continue;
+		const wooddens  = +(fieldStrings[fields.Wooddens]);  if (isNaN(wooddens))  continue;
+		const longevity = +(fieldStrings[fields.Longevity]); if (isNaN(longevity)) continue;
+		const height    = +(fieldStrings[fields.Height]);    if (isNaN(height))    continue;
+
+		dataBuffer[(lineIndex*fieldCount) + fields.Year]      = year;
+		dataBuffer[(lineIndex*fieldCount) + fields.Cell]      = cell;
+		dataBuffer[(lineIndex*fieldCount) + fields.SLA]       = sla;
+		dataBuffer[(lineIndex*fieldCount) + fields.Wooddens]  = wooddens;
+		dataBuffer[(lineIndex*fieldCount) + fields.Longevity] = longevity;
+		dataBuffer[(lineIndex*fieldCount) + fields.Height]    = height;
+
+		lineIndex++;
+		dataBufferLinesCount++;
+	}
+	window.performance.mark('finish_read_lines');
+	window.performance.measure('read_lines', 'start_read_lines', 'finish_read_lines');
+	console.log(`approxLineCount: ${approxLineCount}, actual count: ${lineEndIndex}`);
+
+	let cellCount = 0;
 	let firstYear = null;
 	let lastYear  = null;
 	let heightMax = 0;
 
 	const maxTreeDisplayHeight = 40;
 
-	data.forEach(entry => {
+	function forEachDataEntry(callback) {
+		for (let lineIndex=0; lineIndex<dataBufferLinesCount; lineIndex++) {
+			callback(dataBuffer.subarray(lineIndex*fieldCount, (lineIndex+1)*fieldCount));
+		}
+	}
+	
+	window.performance.mark('start_calc_data_bounds');
+	forEachDataEntry(entry => {
+		cellCount = Math.max(cellCount, entry[fields.Cell]+1);
 		firstYear = Math.min(firstYear||entry[fields.Year], entry[fields.Year]);
 		lastYear  = Math.max(lastYear ||entry[fields.Year], entry[fields.Year]);
 		heightMax = Math.max(heightMax, entry[fields.Height])
 	});
+	window.performance.mark('finish_calc_data_bounds');
+	window.performance.measure('calc_data_bounds', 'start_calc_data_bounds', 'finish_calc_data_bounds');
 
 	const yearCount = lastYear - firstYear;
 
 	const cellTreeCounts = new Uint8Array(cellCount * yearCount);
-	data.forEach(entry => cellTreeCounts[(cellCount*(entry[fields.Year]-firstYear)) + entry[fields.Cell]]++);
+	forEachDataEntry(entry => cellTreeCounts[(cellCount*(entry[fields.Year]-firstYear)) + entry[fields.Cell]]++);
 	let maxTreesPerCell = 0;
 	cellTreeCounts.forEach(count => maxTreesPerCell = Math.max(maxTreesPerCell, count));
+	console.log('Max number of trees per cell: ' + maxTreesPerCell);
 
 	const cellRowsPerTile = Math.floor(Math.sqrt(cellCount));
 	const cellsPerTile = cellRowsPerTile * cellRowsPerTile;
@@ -53,27 +115,33 @@ function loadTreeDataCsv(csvText) {
 
 	const cellTreeIdMap = new Uint32Array(cellCount * treesPerCell);
 
-	for (const entry of data) {
+	window.performance.mark('start_convert_to_texture');
+	const hashBuffer = new Float32Array(3);
+	const treeIdHasher = XXH.h32(0);
+	forEachDataEntry(entry => {
 		const cell = entry[fields.Cell];
 		if (cell >= cellsPerTile) {
-			continue;
+			return;
 		}
 
-		const treeIdHash = MurmurHash3('string');
-		treeIdHash.hash(String(entry[fields.SLA]));
-		treeIdHash.hash(String(entry[fields.Longevity]));
-		treeIdHash.hash(String(entry[fields.Wooddens]));
-		const treeId = treeIdHash.result();
+		treeIdHasher.init(0);
+		hashBuffer[0] = entry[fields.SLA];
+		hashBuffer[1] = entry[fields.Longevity];
+		hashBuffer[1] = entry[fields.Wooddens];
+		treeIdHasher.update(hashBuffer.buffer);
+		const treeId = treeIdHasher.digest().toNumber();
 
-		let treeIndexInCell = 0;
-		for (let i=cell*treesPerCell; i<cell*(treesPerCell+1); i++) {
-			if (cellTreeIdMap[i] === treeId || cellTreeIdMap[i] === 0) {
-				treeIndexInCell = i - (cell*treesPerCell);
-				if (cellTreeIdMap[i] === 0) {
-					cellTreeIdMap[i] = treeId;
-				}
+		let treeIndexInCell = treeId % treesPerCell;
+		for (let i=0; i<treesPerCell; i++) {
+			const lookupId = cellTreeIdMap[(cell*treesPerCell)+treeIndexInCell];
+			if (lookupId === treeId) {
 				break;
 			}
+			if (lookupId === 0) {
+				cellTreeIdMap[(cell*treesPerCell)+treeIndexInCell] = treeId;
+				break;
+			}
+			treeIndexInCell = (treeIndexInCell+1) % treesPerCell;
 		}
 
 		const shuffledTreeIndexInCell = (cell+treeIndexInCell) * 833 % treesPerCell;
@@ -84,7 +152,9 @@ function loadTreeDataCsv(csvText) {
 		const textureIndex = (treeRowsPerTile*treeRowsPerTile*z) + (treeRowsPerTile*y) + x;
 		const heightRatio = entry[fields.Height] / heightMax;
 		tileTextureData[textureIndex] = Math.round(255 * heightRatio);
-	}
+	})
+	window.performance.mark('finish_convert_to_texture');
+	window.performance.measure('convert_to_texture', 'start_convert_to_texture', 'finish_convert_to_texture');
 
 	const tileTexture = new THREE.Data3DTexture(
 		tileTextureData,
