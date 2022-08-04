@@ -5,8 +5,31 @@ onmessage = async function(event) {
 	postMessage({
 		task: 'Downloading CSV',
 	});
-	const csvResponse = await fetch(csvPath);
-	const csvText = await csvResponse.text();
+	let csvText = '';
+	try {
+		const csvResponse = await fetch(csvPath);
+		const csvSize = parseInt(csvResponse.headers.get('Content-Length'));
+		const reader = csvResponse.body.getReader();
+		const decoder = new TextDecoder();
+		let fetchedBytes = 0;
+		while (true) {
+			const {value, done} = await reader.read();
+			if (done) {
+				break;
+			}
+			csvText += decoder.decode(value, {stream: true});
+			fetchedBytes += value.length;
+			postMessage({
+				task: 'Downloading CSV',
+				progress: fetchedBytes / csvSize,
+			});
+		}
+	} catch (error) {
+		postMessage({
+			task: 'Failed to download CSV: ' + error,
+		});
+		return;
+	}
 
 	let lineStartIndex = 0;
 	let lineEndIndex = 0;
