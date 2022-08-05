@@ -44,7 +44,7 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 	tileTexture.magFilter = THREE.LinearFilter;
 	tileTexture.needsUpdate = true;
 
-	const maxTreeDisplayHeight = 40;
+	const maxTreeDisplayHeight = 160;
 
 	const tileBoundingMesh = new THREE.Mesh(
 		new THREE.BoxGeometry(10000, 10000, maxTreeDisplayHeight),
@@ -68,7 +68,8 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 				viewport: {type: 'v4', value: viewport},
 				cameraPositionLocal: {type: 'v3', value: new THREE.Vector3()},
 				modelViewProjectionMatrixInverse: {type: 'm4', value: new THREE.Matrix4()},
-			}
+			},
+			side: THREE.BackSide,
 		})
 	);
 	tileBoundingMesh.rotation.x = -Math.PI / 2;
