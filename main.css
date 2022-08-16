@@ -25,3 +25,65 @@ canvas {
 	justify-content: center;
 	align-items: center;
 }
+
+#bottom-panel {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 35px;
+	background: rgba(255, 255, 255, .7);
+	display: flex;
+	flex-direction: row;
+	cursor: pointer;
+}
+#bottom-panel .play-pause-button {
+	flex-shrink: 0;
+	width: 35px;
+	height: 35px;
+	padding: 0;
+	border: none;
+	cursor: pointer;
+}
+body[data-playback='paused'] #bottom-panel .play-pause-button {
+	background: center / 70% no-repeat url('data:image/svg+xml,\
+		<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg">\
+			<path fill="black" d="M0.1,0 v1 L0.9,0.5"/>\
+		</svg>\
+	');
+}
+body[data-playback='playing'] #bottom-panel .play-pause-button {
+	background: center / 60% no-repeat url('data:image/svg+xml,\
+		<svg viewBox="0 0 1 1" xmlns="http://www.w3.org/2000/svg" fill="black">\
+			<rect x="0"   y="0" width=".33" height="1"/>\
+			<rect x=".66" y="0" width=".33" height="1"/>\
+		</svg>\
+	');
+}
+#bottom-panel .timeline {
+	flex-grow: 1;
+	position: relative;
+}
+#bottom-panel .timeline .years {
+	height: 100%;
+	display: flex;
+	flex-direction: row;
+	pointer-events: none;
+	font-size: min(1vw, 16px);
+}
+#bottom-panel .timeline .years .year {
+	flex-grow: 1;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	border-right: 1px solid white;
+	border-left: 1px solid white;
+}
+#bottom-panel .timeline .cursor {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: black;
+	pointer-events: none;
+}

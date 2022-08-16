@@ -33,7 +33,7 @@ tileLoader.onmessage = event => {
 
 const tileFragmentShaderFetch = fetch('tile-fragment-shader.glsl').then(response => response.text());
 
-async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTile, yearCount, tileTextureData}) {
+async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTile, firstYear, lastYear, yearCount, tileTextureData}) {
 	const tileTexture = new THREE.Data3DTexture(
 		tileTextureData,
 		treeRowsPerTile,
@@ -77,16 +77,99 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 	tileBoundingMesh.updateMatrixWorld();
 	scene.add(tileBoundingMesh);
 
-	let isRendering = false;
-	function render() {
-		if (isRendering) {
+	const bottomPanelEl = document.getElementById('bottom-panel');
+	const timelineEl = bottomPanelEl.querySelector('.timeline');
+	const timelineYearsEl = timelineEl.querySelector('.years');
+	const timelineCursorEl = timelineEl.querySelector('.cursor');
+
+	let isPlaying = false;
+
+	let renderAnimationFrameId = null;
+	let lastFrameTimestamp = null;
+	function requestRenderFrame() {
+		lastFrameTimestamp = performance.now();
+		renderAnimationFrameId = requestAnimationFrame(function callback(timestamp) {
+			if (isPlaying) {
+				const dt = timestamp - lastFrameTimestamp;
+				const time = (tileBoundingMesh.material.uniforms.time.value + (dt / 10000)) % 1;
+				tileBoundingMesh.material.uniforms.time.value = time;
+				timelineCursorEl.style.left = `${time * 100}%`;
+				requestRenderFrame();
+			}
+			lastFrameTimestamp = timestamp;
+			renderAnimationFrameId = null;
+			webglRenderer.render(scene, camera);
+		});
+	}
+	requestRenderFrame();
+
+	function markRenderRequired() {
+		if (renderAnimationFrameId === null && !isPlaying) {
+			requestRenderFrame();
+		}
+	}
+
+	function jogPlayback(time) {
+		if (isPlaying) {
+			isPlaying = false;
+			document.body.dataset.playback = 'paused';
+		}
+		time = clamp(time, 0, 1);
+		tileBoundingMesh.material.uniforms.time.value = time;
+		markRenderRequired();
+		timelineCursorEl.style.left = `${time * 100}%`;
+	}
+	function jogPlaybackYearOffset(yearOffset) {
+		let time = tileBoundingMesh.material.uniforms.time.value;
+		time += (1/yearCount) * yearOffset;
+		time = Math.round(time * yearCount) / yearCount;
+		jogPlayback(time);
+	}
+
+	function togglePlayback() {
+		isPlaying = !isPlaying;
+		if (isPlaying && renderAnimationFrameId === null) {
+			requestRenderFrame();
+		} else if (!isPlaying && renderAnimationFrameId !== null) {
+			cancelAnimationFrame(renderAnimationFrameId);
+			renderAnimationFrameId = null;
+		}
+		document.body.dataset.playback = isPlaying ? 'playing' : 'paused';
+	}
+
+	const playPauseButton = bottomPanelEl.querySelector('.play-pause-button');
+	playPauseButton.onpointerdown = togglePlayback;
+
+	document.body.addEventListener('keydown', event => {
+		switch (event.code) {
+			case 'Space': togglePlayback(); break;
+			case 'ArrowRight': jogPlaybackYearOffset(1); break;
+			case 'ArrowLeft': jogPlaybackYearOffset(-1); break;
+			case 'Home': jogPlayback(0); break;
+			case 'End': jogPlayback(1); break;
+		}
+	});
+
+	timelineYearsEl.innerHTML = [...'x'.repeat(yearCount)].map((x,index) => `<span class="year">${firstYear + index}</span>`).join('');
+	function handleTimelinePointerEvent(event) {
+		const time = event.offsetX / timelineEl.offsetWidth;
+		jogPlayback(time);
+	}
+	timelineEl.onpointerdown = downEvent => {
+		if (timelineEl.onpointermove) {
 			return;
 		}
-		isRendering = true;
-		requestAnimationFrame(() => {
-			webglRenderer.render(scene, camera);
-			isRendering = false;
-		});
+		downEvent.preventDefault();
+		timelineEl.setPointerCapture(downEvent.pointerId);
+		handleTimelinePointerEvent(downEvent);
+		timelineEl.onpointermove = handleTimelinePointerEvent;
+		timelineEl.onpointerup = timelineEl.onpointercancel = upEvent => {
+			if (upEvent.pointerId === downEvent.pointerId) {
+				timelineEl.onpointermove = null;
+				timelineEl.onpointerup = null;
+				timelineEl.onpointercancel = null;
+			}
+		}
 	}
 
 	function handleWindowResize() {
@@ -98,23 +181,17 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 		webglRenderer.getViewport(viewport);
 		tileBoundingMesh.material.uniforms.viewport.value = viewport;
 
-		render();
+		markRenderRequired();
 	}
 	handleWindowResize();
 	window.addEventListener('resize', handleWindowResize);
-
-	window.requestAnimationFrame(function callback(timestamp) {
-		tileBoundingMesh.material.uniforms.time.value = (timestamp / 5000) % 1;
-		render();
-		window.requestAnimationFrame(callback);
-	});
 
 	const orbitControls = new OrbitControls(camera, webglRenderer.domElement);
 	function oncamerachange() {
 		camera.updateMatrixWorld();
 		tileBoundingMesh.material.uniforms.cameraPositionLocal.value = camera.position.clone().applyMatrix4(tileBoundingMesh.matrixWorld.clone().invert());
 		tileBoundingMesh.material.uniforms.modelViewProjectionMatrixInverse.value = tileBoundingMesh.matrixWorld.clone().invert().multiply(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
-		render();
+		markRenderRequired();
 	}
 	oncamerachange();
 	orbitControls.addEventListener('change', oncamerachange);

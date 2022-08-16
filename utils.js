@@ -1,5 +1,11 @@
 'use strict';
 
+function clamp(f, min, max) {
+	f = Math.min(f, max);
+	f = Math.max(f, min);
+	return f;
+}
+
 function hsl2rgb(h,s,l) {
 	const a = s*Math.min(l,1-l);
 	const f = (n,k=(n+h/30)%12) => l - a*Math.max(Math.min(k-3,9-k,1),-1);

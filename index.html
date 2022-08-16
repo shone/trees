@@ -1,14 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
+
 	<head>
 		<meta charset="utf-8">
-		<title>Treesim</title>
+		<title>Trees</title>
 		<meta name="viewport" content="initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
 		<link rel="stylesheet" href="main.css">
 	</head>
-	<body>
+
+	<body data-playback="paused">
 		<canvas></canvas>
 		<div id="progress"></div>
+		<div id="bottom-panel">
+			<button class="play-pause-button"></button>
+			<div class="timeline">
+				<div class="years"></div>
+				<div class="cursor"></div>
+			</div>
+		</div>
+
 		<script src="three.js"></script>
 		<script src="OrbitControls.js"></script>
 		<script src="utils.js"></script>

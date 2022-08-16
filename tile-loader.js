@@ -183,6 +183,8 @@ onmessage = async function(event) {
 			cellRowsPerTile,
 			treeRowsPerCell,
 			treeRowsPerTile,
+			firstYear,
+			lastYear,
 			yearCount,
 			tileTextureData,
 		},
