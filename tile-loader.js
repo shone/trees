@@ -62,20 +62,17 @@ onmessage = async function(event) {
 		}
 
 		const fieldStrings = line.split(',');
+		if (fieldStrings.length < fieldCount) {
+			// Skip empty line when the year increments
+			continue;
+		}
 
-		const year      = +(fieldStrings[fields.Year]);      if (isNaN(year))      continue;
-		const cell      = +(fieldStrings[fields.Cell]);      if (isNaN(cell))      continue;
-		const sla       = +(fieldStrings[fields.SLA]);       if (isNaN(sla))       continue;
-		const wooddens  = +(fieldStrings[fields.Wooddens]);  if (isNaN(wooddens))  continue;
-		const longevity = +(fieldStrings[fields.Longevity]); if (isNaN(longevity)) continue;
-		const height    = +(fieldStrings[fields.Height]);    if (isNaN(height))    continue;
-
-		dataBuffer[(lineIndex*fieldCount) + fields.Year]      = year;
-		dataBuffer[(lineIndex*fieldCount) + fields.Cell]      = cell;
-		dataBuffer[(lineIndex*fieldCount) + fields.SLA]       = sla;
-		dataBuffer[(lineIndex*fieldCount) + fields.Wooddens]  = wooddens;
-		dataBuffer[(lineIndex*fieldCount) + fields.Longevity] = longevity;
-		dataBuffer[(lineIndex*fieldCount) + fields.Height]    = height;
+		dataBuffer[(lineIndex*fieldCount) + fields.Year]      = +(fieldStrings[fields.Year]);
+		dataBuffer[(lineIndex*fieldCount) + fields.Cell]      = +(fieldStrings[fields.Cell]);
+		dataBuffer[(lineIndex*fieldCount) + fields.SLA]       = +(fieldStrings[fields.SLA]);
+		dataBuffer[(lineIndex*fieldCount) + fields.Wooddens]  = +(fieldStrings[fields.Wooddens]);
+		dataBuffer[(lineIndex*fieldCount) + fields.Longevity] = +(fieldStrings[fields.Longevity]);
+		dataBuffer[(lineIndex*fieldCount) + fields.Height]    = +(fieldStrings[fields.Height]);
 
 		if ((lineIndex % 10000) === 0) {
 			postMessage({
@@ -91,11 +88,6 @@ onmessage = async function(event) {
 	performance.measure('read_lines', 'start_read_lines', 'finish_read_lines');
 	console.log(`approxLineCount: ${approxLineCount}, actual count: ${lineEndIndex}`);
 
-	let cellCount = 0;
-	let firstYear = null;
-	let lastYear  = null;
-	let heightMax = 0;
-
 	function forEachDataEntry(callback) {
 		for (let lineIndex=0; lineIndex<dataBufferLinesCount; lineIndex++) {
 			callback(dataBuffer.subarray(lineIndex*fieldCount, (lineIndex+1)*fieldCount), lineIndex);
@@ -103,6 +95,10 @@ onmessage = async function(event) {
 	}
 	
 	performance.mark('start_calc_data_bounds');
+	let cellCount = 0;
+	let firstYear = 0;
+	let lastYear  = 0;
+	let heightMax = 0;
 	forEachDataEntry(entry => {
 		cellCount = Math.max(cellCount, entry[fields.Cell]+1);
 		firstYear = Math.min(firstYear||entry[fields.Year], entry[fields.Year]);
