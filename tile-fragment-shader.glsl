@@ -1,3 +1,6 @@
+precision mediump float;
+precision mediump int;
+
 in vec2 uvw;
 uniform float time;
 uniform vec3 cameraPositionLocal;
@@ -129,37 +132,45 @@ vec4 renderTree(const Ray ray, vec3 texturePosition) {
 
 const int maxTextureSamples = 120;
 
-vec4 renderTreesAlongTileTextureLine(const Ray ray, ivec2 p0, ivec2 p1) {
-	// TODO: use this algorithm instead: https://gamedev.stackexchange.com/a/81332
+vec4 renderTreesAlongTileTextureLine(const Ray ray, vec2 start, vec2 end) {
+	// Grid traversal algorythm adapted from https://gamedev.stackexchange.com/a/182143
 
-	int dx = abs(p1.x - p0.x);
-	int sx = p0.x < p1.x ? 1 : -1;
-	int dy = -abs(p1.y - p0.y);
-	int sy = p0.y < p1.y ? 1 : -1;
-	int error = dx + dy;
+	//Grid cells are 1.0 X 1.0.
+	vec2 texturePos = floor(start);
+	vec2 diff = end - start;
+	vec2 signStep = sign(diff);
 
-	for (int i=0; i<maxTextureSamples; i++) {
-		vec4 treeColor = renderTree(ray, vec3((vec2(p0)+.5)/treeRowsPerTile, time));
+	//Ray/Slope related maths.
+	//Straight distance to the first vertical grid boundary.
+	float xOffset = end.x > start.x ? (ceil(start.x) - start.x) : (start.x - floor(start.x));
+	//Straight distance to the first horizontal grid boundary.
+	float yOffset = end.y > start.y ? (ceil(start.y) - start.y) : (start.y - floor(start.y));
+	//Angle of ray/slope.
+	float angle = atan(-diff.y, diff.x);
+	//NOTE: These can be divide by 0's, but JS just yields Infinity! :)
+	//How far to move along the ray to cross the first vertical grid cell boundary.
+	float tMaxX = xOffset / cos(angle);
+	//How far to move along the ray to cross the first horizontal grid cell boundary.
+	float tMaxY = yOffset / sin(angle);
+	//How far to move along the ray to move horizontally 1 grid cell.
+	float tDeltaX = 1. / cos(angle);
+	//How far to move along the ray to move vertically 1 grid cell.
+	float tDeltaY = 1. / sin(angle);
+
+	//Travel one grid cell at a time.
+	float manhattanDistance = abs(floor(end.x) - floor(start.x)) + abs(floor(end.y) - floor(start.y));
+	for (float t = 0.; t <= manhattanDistance; ++t) {
+		vec4 treeColor = renderTree(ray, vec3((texturePos+.5)/treeRowsPerTile, time));
 		if (treeColor.a > 0.) {
 			return treeColor;
 		}
-
-		if (p0 == p1) {
-			break;
-		}
-		int e2 = 2 * error;
-		if (e2 >= dy) {
-			if (p0.x == p1.x) {
-				break;
-			}
-			error += dy;
-			p0.x += sx;
-		} else if (e2 <= dx) { // Use 'else' according to https://stackoverflow.com/a/12934943
-			if (p0.y == p1.y) {
-				break;
-			}
-			error += dx;
-			p0.y += sy;
+		//Only move in either X or Y coordinates, not both.
+		if (abs(tMaxX) < abs(tMaxY)) {
+			tMaxX += tDeltaX;
+			texturePos.x += signStep.x;
+		} else {
+			tMaxY += tDeltaY;
+			texturePos.y += signStep.y;
 		}
 	}
 
@@ -194,11 +205,7 @@ void main() {
 		texturePosFar = texturePosNear + (normalize(texturePosFar-texturePosNear)*float(maxTextureSamples));
 	}
 
-	vec4 treeColor = renderTreesAlongTileTextureLine(
-		cameraRay,
-		ivec2(floor(texturePosNear)),
-		ivec2(floor(texturePosFar))
-	);
+	vec4 treeColor = renderTreesAlongTileTextureLine(cameraRay, texturePosNear, texturePosFar);
 	if (treeColor.a > 0.) {
 		gl_FragColor = treeColor;
 		return;
