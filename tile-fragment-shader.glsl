@@ -31,6 +31,12 @@ float raySphereIntersect(const Ray ray, const vec3 spherePosition, const float s
 	return (p - q) > 0.0 ? p - q : p + q;
 }
 
+float pointBoxIntersect(vec3 p, vec3 boxSize) {
+	// Adapted from https://stackoverflow.com/a/26697650
+	vec3 s = step(boxSize, abs(p));
+	return (1.-s.x) * (1.-s.y) * (1.-s.z);
+}
+
 struct BoxIntersect {
 	float near;
 	float far;
@@ -99,44 +105,37 @@ vec4 transformPointViewportToNdc(vec4 point) {
 	);
 }
 
-vec4 renderTree(const Ray ray, vec3 texturePosition) {
-	float treeHeightRatio = texture(tileTextureSampler, texturePosition).r;
-	if (treeHeightRatio <= 0.) {
-		return vec4(0.);
-	}
+vec4 renderTree(const Ray ray, const vec2 treePosition, const float treeHeightRatio) {
+	float treeHeight = treeboxHeight * treeHeightRatio;
 
-	float sphereIntersection = -1.;
-	vec4 cylinderIntersection = vec4(-1.);
-
-	vec2 treeWorldPos = (texturePosition.xy-.5) * 10000.;
-	float treeHeight = maxTreeDisplayHeight * treeHeightRatio;
-	float maxSphereRadius = maxTreeDisplayHeight * .25;
-	float sphereRadius = maxSphereRadius * treeHeightRatio;
-	vec3 spherePosition = vec3(treeWorldPos.xy, treeHeight - sphereRadius);
-
-	sphereIntersection = raySphereIntersect(ray, spherePosition, sphereRadius);
-
-	cylinderIntersection = rayCylinderIntersect(ray, vec3(treeWorldPos.xy, 0.), vec3(treeWorldPos.xy, treeHeight - (sphereRadius*2.)), sphereRadius * .3);
-
-	//final color
-	if(sphereIntersection > 0.) {
+	// Canopy
+	const float maxCanopyRadius = 2.;
+	float canopyRadius = maxCanopyRadius * treeHeightRatio;
+	vec3 canopyPosition = vec3(treePosition.xy, treeHeight - canopyRadius);
+	if (raySphereIntersect(ray, canopyPosition, canopyRadius) > 0.) {
 		return vec4(0., 1., 0., 1.); // sphere
 		//sphere diffuse coloring
 		//vec3 normal = sphereNormal(C, cameraPos + sphereIntersection * camDir);
-	} else if (cylinderIntersection.x != -1.) {
-		return vec4(151./255., 90./255., 33./255., 1.);
-	} else {
-		return vec4(0.);
 	}
+
+	// Trunk
+	vec3 trunkTopPosition = vec3(treePosition.xy, treeHeight - canopyRadius);
+	const float maxTrunkRadius = .4;
+	float trunkRadius = maxTrunkRadius * treeHeightRatio;
+	if (rayCylinderIntersect(ray, vec3(treePosition.xy, 0.), trunkTopPosition, trunkRadius).x != -1.) {
+		return vec4(151./255., 90./255., 33./255., 1.);
+	}
+
+	return vec4(0.);
 }
 
 const int maxTextureSamples = 120;
 
-vec4 renderTreesAlongTileTextureLine(const Ray ray, vec2 start, vec2 end) {
+vec4 renderTreesAlongLine(const Ray ray, vec2 start, vec2 end) {
 	// Grid traversal algorythm adapted from https://gamedev.stackexchange.com/a/182143
 
 	//Grid cells are 1.0 X 1.0.
-	vec2 texturePos = floor(start);
+	vec2 treeboxPosition = floor(start);
 	vec2 diff = end - start;
 	vec2 signStep = sign(diff);
 
@@ -158,19 +157,26 @@ vec4 renderTreesAlongTileTextureLine(const Ray ray, vec2 start, vec2 end) {
 	float tDeltaY = 1. / sin(angle);
 
 	//Travel one grid cell at a time.
-	float manhattanDistance = abs(floor(end.x) - floor(start.x)) + abs(floor(end.y) - floor(start.y));
-	for (float t = 0.; t <= manhattanDistance; ++t) {
-		vec4 treeColor = renderTree(ray, vec3((texturePos+.5)/treeRowsPerTile, time));
+	vec2 manhattanVec = abs(floor(end) - floor(start));
+	float manhattanDistance = manhattanVec.x + manhattanVec.y;
+	float maxT = min(manhattanDistance, float(maxTextureSamples));
+	for (float t = 0.; t <= maxT; ++t) {
+		vec2 treePosition = treeboxPosition + .5;
+		vec3 texturePosition = vec3((treeboxPosition+.5).xy/treeRowsPerTile, time);
+		float treeHeightRatio = texture(tileTextureSampler, texturePosition).r;
+
+		vec4 treeColor = renderTree(ray, treePosition, treeHeightRatio);
 		if (treeColor.a > 0.) {
 			return treeColor;
 		}
+
 		//Only move in either X or Y coordinates, not both.
 		if (abs(tMaxX) < abs(tMaxY)) {
 			tMaxX += tDeltaX;
-			texturePos.x += signStep.x;
+			treeboxPosition.x += signStep.x;
 		} else {
 			tMaxY += tDeltaY;
-			texturePos.y += signStep.y;
+			treeboxPosition.y += signStep.y;
 		}
 	}
 
@@ -184,28 +190,17 @@ void main() {
 	vec4 fragCoordClip = fragCoordNdc / gl_FragCoord.w; // Perform perspective divide
 	vec4 fragCoordWorld = modelViewProjectionMatrixInverse * fragCoordClip;
 
-	Ray cameraRay = Ray(cameraPositionLocal + vec3(0.,0.,maxTreeDisplayHeight/2.), normalize(fragCoordWorld.xyz - cameraPositionLocal));
+	Ray cameraRay = Ray(cameraPositionLocal, normalize(fragCoordWorld.xyz - cameraPositionLocal));
 
-	BoxIntersect boxIntersect = rayBoxIntersect(Ray(cameraRay.origin - vec3(0.,0.,maxTreeDisplayHeight/2.), cameraRay.dir), vec3(5000., 5000., maxTreeDisplayHeight/2.));
-	if (boxIntersect.near == -1. && boxIntersect.far == -1.) {
-		gl_FragColor = vec4(1., 1., 1., 1.);
-		return;
+	vec3 tileDimensionsHalf = vec3(tileWidth/2., tileWidth/2., treeboxHeight/2.);
+	BoxIntersect tileIntersect = rayBoxIntersect(Ray(cameraRay.origin - tileDimensionsHalf, cameraRay.dir), tileDimensionsHalf);
+	vec3 tileIntersectNearPos = cameraRay.origin + (cameraRay.dir * tileIntersect.near);
+	vec3 tileIntersectFarPos  = cameraRay.origin + (cameraRay.dir * tileIntersect.far);
+	if (pointBoxIntersect(cameraRay.origin - tileDimensionsHalf, tileDimensionsHalf) > 0.) {
+		tileIntersectNearPos = cameraRay.origin;
 	}
 
-	vec3 boxIntersectNearPos = (cameraRay.origin + vec3(0.,0.,maxTreeDisplayHeight/2.)) + (cameraRay.dir * boxIntersect.near);
-	vec3 boxIntersectFarPos  = (cameraRay.origin + vec3(0.,0.,maxTreeDisplayHeight/2.)) + (cameraRay.dir * boxIntersect.far);
-
-	if (cameraRay.origin.z >= .0 && cameraRay.origin.z <= maxTreeDisplayHeight && abs(cameraRay.origin.x) < 5000. && abs(cameraRay.origin.y) < 5000.) {
-		boxIntersectNearPos = cameraRay.origin;
-	}
-
-	vec2 texturePosNear = ((boxIntersectNearPos.xy/10000.)+.5) * (cellRowsPerTile*treeRowsPerCell);
-	vec2 texturePosFar  = ((boxIntersectFarPos.xy /10000.)+.5) * (cellRowsPerTile*treeRowsPerCell);
-	if (length(texturePosFar-texturePosNear) > float(maxTextureSamples)) {
-		texturePosFar = texturePosNear + (normalize(texturePosFar-texturePosNear)*float(maxTextureSamples));
-	}
-
-	vec4 treeColor = renderTreesAlongTileTextureLine(cameraRay, texturePosNear, texturePosFar);
+	vec4 treeColor = renderTreesAlongLine(cameraRay, tileIntersectNearPos.xy, tileIntersectFarPos.xy);
 	if (treeColor.a > 0.) {
 		gl_FragColor = treeColor;
 		return;
@@ -215,7 +210,7 @@ void main() {
 	if (groundPlaneIntersection > 0.) {
 		vec2 groundPlanePos = (cameraRay.origin + (cameraRay.dir * groundPlaneIntersection)).xy;
 		// Debug display of tree coordinates
-		vec2 fragPosInCell = mod(((groundPlanePos/10000.)+.5) * cellRowsPerTile, 1.);
+		vec2 fragPosInCell = mod(((groundPlanePos/tileWidth)+.5) * cellRowsPerTile, 1.);
 		float intensity = max(abs(fragPosInCell.x - .5) / .5, abs(fragPosInCell.y - .5) / .5) > .95 ? 0. : .5;
 		gl_FragColor = vec4(
 			intensity,
@@ -226,5 +221,5 @@ void main() {
 		return;
 	}
 
-	gl_FragColor = vec4(95./255., 165./255., 1., 1.);
+	gl_FragColor = vec4(0.);
 }

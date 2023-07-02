@@ -1,10 +1,10 @@
 'use strict';
 
 const webglRenderer = new THREE.WebGLRenderer({canvas: document.querySelector('canvas')});
-let viewport = new THREE.Vector4();
+const viewport = new THREE.Vector4();
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xdddddd);
+scene.background = new THREE.Color(0x01AAE5);
 
 const camera = new THREE.PerspectiveCamera(
 	60, // FOV
@@ -12,8 +12,8 @@ const camera = new THREE.PerspectiveCamera(
 	1, // Near
 	64000, // Far
 );
-camera.position.set(0, 800, 1000);
-camera.lookAt(0, 0, 0);
+camera.position.set(-50, 65, -50);
+camera.lookAt(0, -100, 0);
 
 const progressEl = document.getElementById('progress');
 
@@ -44,38 +44,46 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 	tileTexture.magFilter = THREE.LinearFilter;
 	tileTexture.needsUpdate = true;
 
-	const maxTreeDisplayHeight = 160;
+	const treeboxWidth = 1;
+	const treeboxHeight = 10;
+	const tileWidth = treeboxWidth * treeRowsPerTile;
 
-	const tileBoundingMesh = new THREE.Mesh(
-		new THREE.BoxGeometry(10000, 10000, maxTreeDisplayHeight),
-		new THREE.ShaderMaterial({
-			vertexShader: `
-				out vec2 uvw;
-				void main() {
-					uvw = uv;
-					gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1);
-				}
-			`,
-			fragmentShader: `
-				const float maxTreeDisplayHeight = ${maxTreeDisplayHeight.toFixed(1)};
-				const float cellRowsPerTile = ${cellRowsPerTile.toFixed(1)};
-				const float treeRowsPerCell = ${treeRowsPerCell.toFixed(1)};
-				const float treeRowsPerTile = ${treeRowsPerTile.toFixed(1)};
-			` + await tileFragmentShaderFetch,
-			uniforms: {
-				tileTextureSampler: {type: 't', value: tileTexture},
-				time: {type: 'f', value: 0},
-				viewport: {type: 'v4', value: viewport},
-				cameraPositionLocal: {type: 'v3', value: new THREE.Vector3()},
-				modelViewProjectionMatrixInverse: {type: 'm4', value: new THREE.Matrix4()},
-			},
-			side: THREE.BackSide,
-		})
-	);
-	tileBoundingMesh.rotation.x = -Math.PI / 2;
-	tileBoundingMesh.position.y = maxTreeDisplayHeight/2;
-	tileBoundingMesh.updateMatrixWorld();
-	scene.add(tileBoundingMesh);
+	const tileGeometry = new THREE.BoxGeometry(tileWidth, tileWidth, treeboxHeight);
+	tileGeometry.translate(tileWidth/2, tileWidth/2, treeboxHeight/2);
+
+	const tileMaterial = new THREE.ShaderMaterial({
+		vertexShader: `
+			out vec2 uvw;
+			void main() {
+				uvw = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1);
+			}
+		`,
+		fragmentShader: `
+			const float treeboxWidth = ${treeboxWidth.toFixed(1)};
+			const float treeboxHeight = ${treeboxHeight.toFixed(1)};
+			const float tileWidth = ${tileWidth.toFixed(1)};
+			const float cellRowsPerTile = ${cellRowsPerTile.toFixed(1)};
+			const float treeRowsPerCell = ${treeRowsPerCell.toFixed(1)};
+			const float treeRowsPerTile = ${treeRowsPerTile.toFixed(1)};
+		` + await tileFragmentShaderFetch,
+		uniforms: {
+			tileTextureSampler: {type: 't', value: tileTexture},
+			time: {type: 'f', value: 0},
+			viewport: {type: 'v4', value: viewport},
+			cameraPositionLocal: {type: 'v3', value: new THREE.Vector3()},
+			modelViewProjectionMatrixInverse: {type: 'm4', value: new THREE.Matrix4()},
+		},
+		side: THREE.BackSide,
+		transparent: true,
+	});
+
+	const tileMesh = new THREE.Mesh(tileGeometry, tileMaterial);
+	tileMesh.rotation.x = -Math.PI / 2;
+	tileMesh.position.x -= tileWidth * .2;
+	tileMesh.position.z += tileWidth * .8;
+	tileMesh.updateMatrixWorld();
+	scene.add(tileMesh);
 
 	const bottomPanelEl = document.getElementById('bottom-panel');
 	const timelineEl = bottomPanelEl.querySelector('.timeline');
@@ -91,13 +99,14 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 		renderAnimationFrameId = requestAnimationFrame(function callback(timestamp) {
 			if (isPlaying) {
 				const dt = timestamp - lastFrameTimestamp;
-				const time = (tileBoundingMesh.material.uniforms.time.value + (dt / 10000)) % 1;
-				tileBoundingMesh.material.uniforms.time.value = time;
+				const time = (tileMesh.material.uniforms.time.value + (dt / 10000)) % 1;
+				tileMesh.material.uniforms.time.value = time;
 				timelineCursorEl.style.left = `${time * 100}%`;
 				requestRenderFrame();
 			}
 			lastFrameTimestamp = timestamp;
 			renderAnimationFrameId = null;
+			webglRenderer.clear(true, true, true);
 			webglRenderer.render(scene, camera);
 		});
 	}
@@ -115,12 +124,12 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 			document.body.dataset.playback = 'paused';
 		}
 		time = clamp(time, 0, 1);
-		tileBoundingMesh.material.uniforms.time.value = time;
+		tileMesh.material.uniforms.time.value = time;
 		markRenderRequired();
 		timelineCursorEl.style.left = `${time * 100}%`;
 	}
 	function jogPlaybackYearOffset(yearOffset) {
-		let time = tileBoundingMesh.material.uniforms.time.value;
+		let time = tileMesh.material.uniforms.time.value;
 		time += (1/yearCount) * yearOffset;
 		time = Math.round(time * yearCount) / yearCount;
 		jogPlayback(time);
@@ -175,11 +184,11 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 	function handleWindowResize() {
 		camera.aspect = window.innerWidth / window.innerHeight;
 		camera.updateProjectionMatrix();
-		tileBoundingMesh.material.uniforms.modelViewProjectionMatrixInverse.value = tileBoundingMesh.matrixWorld.clone().invert().multiply(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
+		tileMesh.material.uniforms.modelViewProjectionMatrixInverse.value = tileMesh.matrixWorld.clone().invert().multiply(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
 
 		webglRenderer.setSize(window.innerWidth, window.innerHeight);
 		webglRenderer.getViewport(viewport);
-		tileBoundingMesh.material.uniforms.viewport.value = viewport;
+		tileMesh.material.uniforms.viewport.value = viewport;
 
 		markRenderRequired();
 	}
@@ -189,8 +198,8 @@ async function loadTileTexture({cellRowsPerTile, treeRowsPerCell, treeRowsPerTil
 	const orbitControls = new OrbitControls(camera, webglRenderer.domElement);
 	function oncamerachange() {
 		camera.updateMatrixWorld();
-		tileBoundingMesh.material.uniforms.cameraPositionLocal.value = camera.position.clone().applyMatrix4(tileBoundingMesh.matrixWorld.clone().invert());
-		tileBoundingMesh.material.uniforms.modelViewProjectionMatrixInverse.value = tileBoundingMesh.matrixWorld.clone().invert().multiply(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
+		tileMesh.material.uniforms.cameraPositionLocal.value = camera.position.clone().applyMatrix4(tileMesh.matrixWorld.clone().invert());
+		tileMesh.material.uniforms.modelViewProjectionMatrixInverse.value = tileMesh.matrixWorld.clone().invert().multiply(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
 		markRenderRequired();
 	}
 	oncamerachange();
